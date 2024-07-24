@@ -1,15 +1,72 @@
+# frozen_string_literal: true
+
 class Item
-  attr_accessor :name, :quantity, :price, :status
+  attr_reader :id, :name, :quantity, :price, :status
+
+  @id_counter = 1
+
+  class << self
+    attr_accessor :id_counter
+  end
 
   def initialize(name, quantity, price, status)
-    @name = name
-    @quantity = quantity
-    @price = price
-    @status = status
+    @id = self.class.id_counter
+    self.class.id_counter += 1
+    self.name = name
+    self.quantity = quantity
+    self.price = price
+    self.status = status
   end
 
   def details
-    "Name: #{@name}, Quantity: #{@quantity}, Price: #{@price}, Status: #{@status}"
+    "ID: #{@id}, Name: #{@name}, Quantity: #{@quantity}, Price: #{@price}, Status: #{@status}"
+  end
+
+  def update(attributes)
+    attributes.each do |key, value|
+      setter_method = "#{key}="
+      send(setter_method, value) if respond_to?(setter_method) && key != :id && !value.nil?
+    end
+  end
+
+  def self.validate_name(name)
+    raise 'Item name cannot be empty.' if name.strip.empty?
+  end
+
+  def self.validate_quantity(quantity)
+    raise 'Quantity must be a positive integer.' unless quantity.is_a?(Integer) && quantity.positive?
+  end
+
+  def self.validate_price(price)
+    raise 'Price must be a positive number.' unless price.is_a?(Numeric) && price >= 0
+  end
+
+  def self.validate_status(status)
+    valid_statuses = %w[active inactive]
+    raise 'Status must be either "active" or "inactive".' unless valid_statuses.include?(status)
+  end
+
+  private
+
+  def name=(name)
+    self.class.validate_name(name)
+    @name = name
+  end
+
+  def quantity=(quantity)
+    self.class.validate_quantity(quantity)
+    @quantity = quantity
+  end
+
+  def price=(price)
+    self.class.validate_price(price)
+    @price = price
+  end
+
+  def status=(status)
+    s = status.downcase
+    self.class.validate_status(s)
+    @status = s
   end
 end
 
@@ -22,145 +79,147 @@ class Inventory
 
   def add_item(name, quantity, price, status)
     items << Item.new(name, quantity, price, status)
+    puts 'Item added successfully!'
+  rescue StandardError => e
+    puts e.message
   end
 
-  def remove_item(name)
-    items.delete_if { |item| item.name == name }
-  end
-
-  def edit_item(name, quantity: nil, price: nil, status: nil)
-    item = items.find { |i| i.name == name }
-
+  def remove_item(id)
+    item = find_item(id)
     if item
-      item.quantity = quantity if quantity
-      item.price = price if price
-      item.status = status if status
+      items.delete(item)
+      puts "Item with ID '#{id}' removed successfully!"
+    else
+      puts 'Item not found!'
+    end
+  end
+
+  def edit_item(id, attributes = {})
+    item = find_item(id)
+    if item
+      begin
+        item.update(attributes)
+        puts 'Item updated successfully!'
+      rescue StandardError => e
+        puts e.message
+      end
     else
       puts 'Item not found!'
     end
   end
 
   def active_items
-    active = items.select { |item| item.status == 'active' }
-    active.each { |item| puts item.details }
-    active
+    items.select { |item| item.status == 'active' }
+  end
+
+  def display_items(items_to_display = items)
+    items_to_display.each { |item| puts item.details }
+  end
+
+  def find_item(id)
+    items.find { |i| i.id == id }
   end
 end
 
-def display_menu
-  puts 'Available inventory actions:'
-  puts '1. Add Item'
-  puts '2. Remove Item'
-  puts '3. Update Item'
-  puts '4. View Inventory'
-  puts '5. View Active Items'
-  puts '6. Exit'
-  print 'Enter the action number: '
-end
+class App
+  def self.run
+    inventory = Inventory.new
 
-def init_inventory
-  inventory = Inventory.new
+    loop do
+      display_menu
+      action = gets.chomp.to_i
 
-  loop do
-    display_menu
+      case action
 
-    action = gets.chomp.to_i
+      when 1
+        name = get_valid_input('Enter item name: ', Item.method(:validate_name))
+        quantity = get_valid_input('Enter item quantity: ', Item.method(:validate_quantity), &:to_i)
+        price = get_valid_input('Enter item price: ', Item.method(:validate_price)) { |i| Float(i) }
+        status = get_valid_input('Enter item status: ', Item.method(:validate_status), &:downcase)
 
-    case action
-    when 1
-      name = ''
-      loop do
-        print 'Enter item name: '
-        name = gets.chomp
-        break unless name.empty?
+        inventory.add_item(name, quantity, price, status)
 
-        puts 'Item name cannot be empty. Please enter a valid name.'
+      when 2
+        puts 'Available items:'
+        inventory.display_items
+
+        id = get_valid_input('Enter the ID of the item to remove: ',
+                             ->(input) { raise 'Item not found.' unless inventory.find_item(input) }, &:to_i)
+
+        inventory.remove_item(id)
+
+      when 3
+        puts 'Available items:'
+        inventory.display_items
+
+        id = get_valid_input(
+          'Enter the ID of the item to update: ',
+          ->(input) { raise 'Item not found.' unless inventory.find_item(input) }, &:to_i
+        )
+        quantity = get_valid_input(
+          'Enter item quantity (leave blank to keep current): ',
+          lambda { |input|
+            (input.is_a?(String) && input.empty?) || Item.validate_quantity(input)
+          }
+        ) { |i| Integer(i) }
+        price = get_valid_input(
+          'Enter item price: (leave blank to keep current): ',
+          lambda { |input|
+            (input.is_a?(String) && input.empty?) || Item.validate_price(input)
+          }
+        ) { |i| Float(i) }
+        status = get_valid_input(
+          'Enter item status: (leave blank to keep current): ',
+          ->(input) { input.empty? || Item.validate_status(input) }, &:downcase
+        )
+
+        attributes = {}
+        attributes[:quantity] = quantity unless quantity.is_a?(String) && quantity.empty?
+        attributes[:price] = price unless price.is_a?(String) && price.empty?
+        attributes[:status] = status unless status.empty?
+
+        inventory.edit_item(id, attributes)
+
+      when 4
+        puts "You have #{inventory.items.length} items in the inventory:"
+        inventory.display_items
+
+      when 5
+        puts 'Active Items:'
+        inventory.display_items(inventory.active_items)
+
+      when 6
+        puts 'Exiting...'
+        break
+
+      else
+        puts 'Invalid action, please try again.'
       end
+    end
+  end
 
-      quantity = nil
-      loop do
-        print 'Enter item quantity: '
-        quantity_input = gets.chomp
-        if quantity_input.match?(/^\d+$/)
-          quantity = quantity_input.to_i
-          break
-        else
-          puts 'Quantity must be a positive integer. Please enter a valid quantity.'
-        end
-      end
+  def self.display_menu
+    puts 'Available inventory actions:'
+    puts '1. Add Item'
+    puts '2. Remove Item'
+    puts '3. Update Item'
+    puts '4. View Inventory'
+    puts '5. View Active Items'
+    puts '6. Exit'
+    print 'Enter the action number: '
+  end
 
-      price = nil
-      loop do
-        print 'Enter item price: '
-        price_input = gets.chomp
-        if price_input.match?(/^\d+$/)
-          price = price_input.to_f
-          break
-        else
-          puts 'Price must be a positive number. Please enter a valid price.'
-        end
-      end
-
-      status = ''
-      loop do
-        print 'Enter item status (active/inactive): '
-        status = gets.chomp.downcase
-        break if %w[active inactive].include?(status)
-
-        puts 'Status must be either "active" or "inactive". Please enter a valid status.'
-      end
-
-      inventory.add_item(name, quantity, price, status)
-      puts 'Item added successfully!'
-
-    when 2
-      puts 'Available item names:'
-      inventory.items.each { |item| puts item.name }
-
-      name = ''
-      loop do
-        print 'Enter one of the available item names to remove: '
-        name = gets.chomp
-        break if inventory.items.any? { |item| item.name == name }
-        puts 'Invalid item name. Please enter a valid item name from the list above.'
-      end
-
-      inventory.remove_item(name)
-      puts 'Item removed successfully!'
-
-    when 3
-      puts 'Available item names:'
-      inventory.items.each { |item| puts item.name }
-      print 'Enter one of the available item names to update: '
-      name = gets.chomp
-      print 'Enter new quantity (leave blank to keep current): '
-      quantity = gets.chomp
-      quantity = quantity.empty? ? nil : quantity.to_i
-      print 'Enter new price (leave blank to keep current): '
-      price = gets.chomp
-      price = price.empty? ? nil : price.to_f
-      print 'Enter new status (active/inactive, leave blank to keep current): '
-      status = gets.chomp
-      status = status.empty? ? nil : status
-      inventory.edit_item(name, quantity: quantity, price: price, status: status)
-      puts 'Item updated successfully!'
-
-    when 4
-      puts "You have #{inventory.items.length} items in the inventory: "
-      inventory.items.each { |item| puts item.details }
-
-    when 5
-      puts 'Active Items:'
-      inventory.active_items
-
-    when 6
-      puts 'Exiting...'
-      break
-
-    else
-      puts 'Invalid action, please try again.'
+  def self.get_valid_input(prompt, validate, &transform)
+    loop do
+      print prompt
+      input = gets.chomp
+      input = transform.call(input) if transform && !input.empty?
+      validate.call(input)
+      return input
+    rescue StandardError => e
+      puts e.message
     end
   end
 end
 
-init_inventory
+App.run
